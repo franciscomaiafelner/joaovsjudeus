@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Mini Shooter 2D</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1f2937, #0f172a 60%);
+      color: #e2e8f0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    canvas {
+      background: linear-gradient(#020617, #0f172a);
+      border: 4px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 24px 48px rgba(2, 6, 23, 0.8);
+    }
+
+    .hud {
+      text-align: center;
+      margin-top: 1rem;
+      letter-spacing: 0.08em;
+      font-size: 0.95rem;
+    }
+
+    .intro {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at center, rgba(185, 28, 28, 0.35), rgba(8, 11, 24, 0.95) 62%);
+      z-index: 999;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      overflow: hidden;
+      animation: introFade 0.7s ease 2.4s forwards;
+    }
+
+    .intro::before {
+      content: '';
+      position: absolute;
+      inset: -30%;
+      background: repeating-linear-gradient(90deg, transparent 0 14px, rgba(248, 113, 113, 0.12) 14px 28px);
+      mix-blend-mode: color-dodge;
+      animation: introScan 0.9s linear infinite;
+    }
+
+    .intro-text {
+      position: relative;
+      font-size: clamp(2.5rem, 9vw, 6rem);
+      font-weight: 900;
+      color: #fef2f2;
+      text-shadow: 0 0 20px rgba(248, 113, 113, 0.65), 0 0 40px rgba(239, 68, 68, 0.45);
+      animation: introSlam 1.8s cubic-bezier(0.12, 0.88, 0.24, 1.12) forwards;
+    }
+
+    .intro-text::before,
+    .intro-text::after {
+      content: 'JOAO VS JUDEUS';
+      position: absolute;
+      inset: 0;
+      opacity: 0.45;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .intro-text::before {
+      color: #ef4444;
+      transform: translate(-6px, -4px);
+      animation: introGlitch 0.18s steps(2) 9;
+    }
+
+    .intro-text::after {
+      color: #22d3ee;
+      transform: translate(6px, 4px);
+      animation: introGlitch 0.24s steps(2) 9 reverse;
+    }
+
+    .intro.fade {
+      opacity: 0;
+      transform: scale(1.08);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+      pointer-events: none;
+    }
+
+    @keyframes introSlam {
+      0% {
+        transform: scale(0.2) rotate(-18deg) skewX(12deg);
+        opacity: 0;
+        filter: blur(16px);
+      }
+      26% {
+        transform: scale(1.3) rotate(6deg) skewX(-6deg);
+        opacity: 1;
+        filter: blur(0);
+      }
+      46% {
+        transform: scale(0.92) rotate(-4deg);
+      }
+      68% {
+        transform: scale(1.08) rotate(3deg);
+      }
+      100% {
+        transform: scale(1) rotate(0);
+      }
+    }
+
+    @keyframes introGlitch {
+      0%, 100% {
+        transform: translate(0, 0);
+      }
+      50% {
+        transform: translate(4px, -4px);
+      }
+    }
+
+    @keyframes introScan {
+      from {
+        transform: translateX(-12%);
+      }
+      to {
+        transform: translateX(12%);
+      }
+    }
+
+    @keyframes introFade {
+      to {
+        opacity: 0;
+        visibility: hidden;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="intro" id="intro">
+    <span class="intro-text">JOAO VS JUDEUS</span>
+  </div>
+  <div>
+    <canvas id="game" width="480" height="600"></canvas>
+    <div class="hud" id="hud">Espaço para atirar • Enter reinicia após perder</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const hud = document.getElementById('hud');
+
+    const groundY = canvas.height - 60;
+
+    const enemyFace = new Image();
+    enemyFace.src = 'benshapiro.jpg';
+    const bossFace = new Image();
+    bossFace.src = 'netanyahy boss.jpg';
+    const playerFace = new Image();
+    playerFace.src = 'Screenshot 2025-09-24 at 16.59.59.png';
+
+    const state = {
+      running: true,
+      score: 0,
+      player: { x: 80, y: groundY - 110, w: 60, h: 110 },
+      bullets: [],
+      enemies: [],
+      keys: new Set(),
+      lastShot: 0,
+      bossActive: false,
+      nextBossScore: 120
+    };
+
+    function spawnEnemy() {
+      if (state.bossActive) return;
+      const width = 60;
+      const height = 90;
+      const y = groundY - height + Math.random() * 6 - 3;
+      const speed = 80 + Math.random() * 60;
+      state.enemies.push({
+        x: canvas.width + width,
+        y,
+        w: width,
+        h: height,
+        speed,
+        hp: 1,
+        maxHp: 1,
+        isBoss: false
+      });
+    }
+
+    function spawnBoss() {
+      const width = 120;
+      const height = 180;
+      state.enemies.push({
+        x: canvas.width + width,
+        y: groundY - height,
+        w: width,
+        h: height,
+        speed: 45 + Math.random() * 20,
+        hp: 10,
+        maxHp: 10,
+        isBoss: true
+      });
+      state.bossActive = true;
+    }
+
+    function loop(timestamp) {
+      if (!state.running) {
+        draw();
+        return;
+      }
+
+      update(timestamp / 1000);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    let lastTime = 0;
+    function update(timeSeconds) {
+      const delta = lastTime ? timeSeconds - lastTime : 0;
+      lastTime = timeSeconds;
+
+      handleInput(timeSeconds);
+      updateBullets(delta);
+      updateEnemies(delta);
+      checkCollisions();
+
+      if (!state.bossActive && state.score >= state.nextBossScore && !state.enemies.some(e => e.isBoss)) {
+        spawnBoss();
+        state.nextBossScore += 150;
+      }
+    }
+
+    function handleInput(timeSeconds) {
+      const { keys } = state;
+      const canShoot = timeSeconds - state.lastShot >= 0.3;
+      const firing = keys.has(' ') || keys.has('Space') || keys.has('Spacebar');
+      if (canShoot && firing) {
+        shoot();
+        state.lastShot = timeSeconds;
+      }
+    }
+
+    function shoot() {
+      const { player } = state;
+      const muzzleY = player.y + player.h * 0.55;
+      state.bullets.push({
+        x: player.x + player.w + 8,
+        y: muzzleY - 4,
+        w: 24,
+        h: 8,
+        speed: 480
+      });
+    }
+
+    function updateBullets(delta) {
+      state.bullets.forEach(b => b.x += b.speed * delta);
+      state.bullets = state.bullets.filter(b => b.x - b.w < canvas.width);
+    }
+
+    function updateEnemies(delta) {
+      if (state.enemies.length < 4 && Math.random() < 0.035) {
+        spawnEnemy();
+      }
+      state.enemies.forEach(enemy => {
+        enemy.x -= enemy.speed * delta;
+        enemy.y += Math.sin((enemy.x + enemy.y) * 0.04) * 10 * delta;
+      });
+      state.enemies = state.enemies.filter(enemy => {
+        const alive = enemy.x + enemy.w > 0;
+        if (!alive && state.running) {
+          gameOver();
+        }
+        return alive;
+      });
+
+      state.bossActive = state.enemies.some(enemy => enemy.isBoss);
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w &&
+             a.x + a.w > b.x &&
+             a.y < b.y + b.h &&
+             a.y + a.h > b.y;
+    }
+
+    function checkCollisions() {
+      const { bullets, enemies, player } = state;
+
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        if (rectsOverlap(enemy, player)) {
+          gameOver();
+          return;
+        }
+
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const bullet = bullets[j];
+          if (rectsOverlap(bullet, enemy)) {
+            bullets.splice(j, 1);
+            enemy.hp -= 1;
+
+            if (enemy.hp <= 0) {
+              enemies.splice(i, 1);
+              const bossDefeated = enemy.isBoss;
+              state.score += bossDefeated ? 80 : 10;
+
+              if (bossDefeated) {
+                state.bossActive = false;
+              } else if (state.running) {
+                spawnEnemy();
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    function gameOver() {
+      if (!state.running) return;
+      state.running = false;
+      hud.textContent = `Game Over • Pontuação: ${state.score} • Pressione Enter para reiniciar`;
+    }
+
+    function resetGame() {
+      state.running = true;
+      state.score = 0;
+      state.bullets = [];
+      state.enemies = [];
+      state.player.x = 80;
+      state.player.y = groundY - state.player.h;
+      state.lastShot = 0;
+      state.bossActive = false;
+      state.nextBossScore = 120;
+      hud.textContent = 'Espaço para atirar • Enter reinicia após perder';
+      spawnEnemy();
+      lastTime = 0;
+      requestAnimationFrame(loop);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Stars background
+      ctx.fillStyle = '#1e293b';
+      for (let i = 0; i < 45; i++) {
+        const x = (i * 97) % canvas.width;
+        const y = (i * 53 + performance.now() * 0.04) % canvas.height;
+        ctx.fillRect(x, y, 2, 2);
+      }
+
+      // Ground strip
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.25)';
+      ctx.fillRect(0, groundY - 4, canvas.width, 4);
+
+      drawPlayer();
+      drawBullets();
+      drawEnemies();
+      drawScore();
+
+      if (!state.running) {
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 28px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 10);
+        ctx.font = '16px system-ui';
+        ctx.fillText('Pressione Enter para reiniciar', canvas.width / 2, canvas.height / 2 + 18);
+      }
+    }
+
+    function drawPlayer() {
+      const { player } = state;
+      const headRadius = 34;
+      const headCenterX = player.x + player.w / 2;
+      const headCenterY = player.y + headRadius;
+
+      // Head portrait (falls back to placeholder color while loading)
+      drawHead(headCenterX, headCenterY, headRadius, playerFace, '#fde68a');
+
+      // Body
+      const bodyWidth = player.w * 0.55;
+      const bodyX = headCenterX - bodyWidth / 2;
+      const bodyTop = headCenterY + headRadius - 8;
+      const bodyHeight = groundY - bodyTop;
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(bodyX, bodyTop, bodyWidth, bodyHeight - 28);
+
+      // Arms
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(bodyX - 18, bodyTop + 18, 18, 12);
+      ctx.fillRect(bodyX + bodyWidth, bodyTop + 18, 26, 12);
+
+      // Gun
+      const muzzleY = player.y + player.h * 0.55;
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(player.x + player.w, muzzleY - 6, 36, 12);
+      ctx.fillStyle = '#cbd5f5';
+      ctx.fillRect(player.x + player.w + 24, muzzleY - 3, 12, 6);
+
+      // Legs
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(bodyX + 4, groundY - 32, 12, 32);
+      ctx.fillRect(bodyX + bodyWidth - 16, groundY - 32, 12, 32);
+    }
+
+    function drawBullets() {
+      state.bullets.forEach(bullet => {
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(bullet.x, bullet.y, bullet.w, bullet.h);
+        ctx.fillStyle = '#fef3c7';
+        ctx.fillRect(bullet.x + bullet.w - 8, bullet.y + 2, 6, bullet.h - 4);
+      });
+    }
+
+    function drawHead(centerX, centerY, radius, image, fallbackColor) {
+      if (image.complete && image.naturalWidth > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(image, centerX - radius, centerY - radius, radius * 2, radius * 2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = fallbackColor;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawEnemies() {
+      state.enemies.forEach(enemy => {
+        const headRadius = enemy.h * 0.32;
+        const headCenterX = enemy.x + enemy.w / 2;
+        const headCenterY = enemy.y + headRadius + 4;
+
+        const bodyWidth = enemy.w * 0.5;
+        const bodyX = headCenterX - bodyWidth / 2;
+        const bodyTop = headCenterY + headRadius - 10;
+        const bodyHeight = enemy.h - (headRadius * 2 - 10);
+
+        if (enemy.isBoss) {
+          drawHead(headCenterX, headCenterY, headRadius * 1.1, bossFace, '#f43f5e');
+
+          ctx.fillStyle = '#be123c';
+          ctx.fillRect(bodyX - 12, bodyTop, bodyWidth + 24, bodyHeight - 12);
+          ctx.fillStyle = '#7f1d1d';
+          ctx.fillRect(bodyX - 12, bodyTop + bodyHeight - 28, bodyWidth + 24, 28);
+
+          // Massive arms
+          ctx.fillStyle = '#f43f5e';
+          ctx.fillRect(bodyX - 42, bodyTop + 24, 38, 18);
+          ctx.fillRect(bodyX + bodyWidth + 4, bodyTop + 24, 38, 18);
+
+          // HP bar above boss
+          const hpWidth = enemy.w;
+          const hpHeight = 8;
+          const hpX = enemy.x;
+          const hpY = enemy.y - 14;
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+          ctx.fillRect(hpX, hpY, hpWidth, hpHeight);
+          ctx.fillStyle = '#22c55e';
+          ctx.fillRect(hpX, hpY, hpWidth * (enemy.hp / enemy.maxHp), hpHeight);
+        } else {
+          drawHead(headCenterX, headCenterY, headRadius, enemyFace, '#f97316');
+
+          ctx.fillStyle = '#ea580c';
+          ctx.fillRect(bodyX, bodyTop, bodyWidth, bodyHeight - 18);
+          ctx.fillStyle = '#9a3412';
+          ctx.fillRect(bodyX, bodyTop + bodyHeight - 18, bodyWidth, 18);
+
+          // Arms reaching forward
+          ctx.fillStyle = '#f97316';
+          ctx.fillRect(bodyX - 18, bodyTop + 16, 18, 10);
+          ctx.fillRect(bodyX + bodyWidth, bodyTop + 16, 22, 10);
+        }
+      });
+    }
+
+    function drawScore() {
+      ctx.fillStyle = '#f1f5f9';
+      ctx.font = 'bold 18px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Pontuação: ${state.score}`, 16, 28);
+      if (state.bossActive) {
+        const boss = state.enemies.find(enemy => enemy.isBoss);
+        if (boss) {
+          ctx.font = '16px system-ui';
+          ctx.fillText(`Boss: ${boss.hp}/${boss.maxHp}`, 16, 52);
+        }
+      }
+    }
+
+    document.addEventListener('keydown', (event) => {
+      state.keys.add(event.key);
+      if (!state.running && (event.key === 'Enter' || event.key === 'r' || event.key === 'R')) {
+        resetGame();
+      }
+    });
+
+    document.addEventListener('keyup', (event) => {
+      state.keys.delete(event.key);
+    });
+
+    const intro = document.getElementById('intro');
+    if (intro) {
+      setTimeout(() => {
+        intro.classList.add('fade');
+        setTimeout(() => intro.remove(), 650);
+      }, 2400);
+    }
+
+    // Inicialização
+    spawnEnemy();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
